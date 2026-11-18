@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sentinela — monitor de foco, pop-ups e requisições</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0b0d10; --panel:#12161b; --panel2:#171c22; --line:#232a32;
+    --txt:#e6edf3; --mut:#8b96a3; --ok:#3ddc97; --warn:#ffb547; --bad:#ff5d5d; --info:#5cb8ff; --vio:#b18cff;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--txt);font-family:Inter,system-ui,sans-serif}
+  body{min-height:100vh;padding:20px;max-width:1200px;margin:0 auto}
+  .mono{font-family:"JetBrains Mono",ui-monospace,monospace}
+  header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+  h1{font-size:18px;margin:0;letter-spacing:.02em;display:flex;align-items:center;gap:10px}
+  h1 .eye{width:12px;height:12px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 0 rgba(61,220,151,.6);animation:pulse 2s infinite}
+  body.paused h1 .eye{background:var(--mut);animation:none}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(61,220,151,.55)}70%{box-shadow:0 0 0 10px rgba(61,220,151,0)}100%{box-shadow:0 0 0 0 rgba(61,220,151,0)}}
+  .btns{display:flex;gap:8px;flex-wrap:wrap}
+  button{background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:8px 12px;font:500 13px Inter,sans-serif;cursor:pointer}
+  button:hover{border-color:#3a4450}
+  button.on{border-color:var(--ok);color:var(--ok)}
+  button.primary{background:#1d2a24;border-color:#2b5040}
+
+  .hero{border:1px solid var(--line);background:var(--panel);border-radius:14px;padding:22px;display:grid;grid-template-columns:1fr auto;gap:16px;align-items:center;transition:background .3s,border-color .3s}
+  .hero.alert{background:#2a1214;border-color:var(--bad);animation:flash .5s 3}
+  .hero.away{background:#2a2112;border-color:var(--warn)}
+  @keyframes flash{50%{background:#4a1518}}
+  .hero .state{font-size:28px;font-weight:700}
+  .hero .sub{color:var(--mut);margin-top:6px;font-size:14px}
+  .hero .clock{font-size:13px;color:var(--mut);text-align:right}
+  .hero .clock b{display:block;font-size:26px;color:var(--txt)}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px;margin:14px 0}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;position:relative;overflow:hidden}
+  .card .k{font-size:12px;color:var(--mut)}
+  .card .v{font-size:26px;font-weight:700;margin-top:4px}
+  .card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--c,var(--line))}
+  .card.bump{animation:bump .6s}
+  @keyframes bump{30%{background:#1f262e}}
+
+  .cols{display:grid;grid-template-columns:2fr 1fr;gap:14px}
+  @media (max-width:860px){.cols{grid-template-columns:1fr}.hero{grid-template-columns:1fr}.hero .clock{text-align:left}}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;display:flex;flex-direction:column;min-height:420px}
+  .panel h2{font-size:13px;margin:0;padding:12px 14px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+  .filters{display:flex;gap:4px;flex-wrap:wrap}
+  .filters button{padding:4px 8px;font-size:11px;border-radius:6px}
+  .filters button.sel{background:#22303c;border-color:var(--info)}
+  #log{flex:1;overflow:auto;max-height:520px;font-size:12.5px}
+  .row{display:grid;grid-template-columns:78px 112px 1fr;gap:10px;padding:7px 14px;border-bottom:1px solid #1a2027;align-items:start}
+  .row:hover{background:#151a20}
+  .row .t{color:var(--mut)}
+  .tag{font-size:10.5px;font-weight:700;padding:2px 6px;border-radius:5px;text-transform:uppercase;letter-spacing:.04em;justify-self:start}
+  .tag.foco{background:#3a2a10;color:var(--warn)}
+  .tag.aba{background:#3a1416;color:var(--bad)}
+  .tag.rede{background:#10283a;color:var(--info)}
+  .tag.popup{background:#2b1d3f;color:var(--vio)}
+  .tag.teclado{background:#2a2a2a;color:#ddd}
+  .tag.sistema{background:#13301f;color:var(--ok)}
+  .row .d{word-break:break-all}
+  .row .d small{color:var(--mut)}
+  .empty{color:var(--mut);padding:30px 14px;text-align:center;font-size:13px}
+
+  .side{display:flex;flex-direction:column;gap:14px}
+  .side .panel{min-height:0}
+  .side .body{padding:12px 14px;font-size:13px;color:#c9d2db;line-height:1.5}
+  .opt{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px dashed #1f262d}
+  .opt:last-child{border:0}
+  .opt label{display:flex;gap:8px;align-items:center;cursor:pointer}
+  input[type=number]{width:60px;background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:6px;padding:4px 6px}
+  .lim li{margin-bottom:6px}
+  .lim{padding-left:18px;margin:0}
+
+  #overlay{position:fixed;inset:0;background:rgba(5,6,8,.78);display:none;align-items:center;justify-content:center;z-index:50;padding:20px}
+  #overlay.show{display:flex}
+  .modal{background:var(--panel);border:1px solid var(--bad);border-radius:14px;max-width:520px;width:100%;padding:22px}
+  .modal h3{margin:0 0 6px;font-size:20px;color:var(--bad)}
+  .modal ul{padding-left:18px;font-size:13.5px;max-height:260px;overflow:auto}
+  .toast{position:fixed;right:16px;bottom:16px;background:#1d242c;border:1px solid var(--line);padding:10px 14px;border-radius:8px;font-size:13px;opacity:0;transform:translateY(8px);transition:.25s;z-index:60}
+  .toast.show{opacity:1;transform:none}
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="eye"></span> Sentinela <span class="mono" style="font-size:12px;color:var(--mut);font-weight:400">monitor de foco · pop-ups · requisições</span></h1>
+  <div class="btns">
+    <button id="bPause" class="on">● Monitorando</button>
+    <button id="bSound">🔇 Som desligado</button>
+    <button id="bFull">⛶ Tela cheia</button>
+    <button id="bTest">Testar</button>
+    <button id="bCopy">Copiar registro</button>
+    <button id="bClear">Limpar</button>
+  </div>
+</header>
+
+<section class="hero" id="hero">
+  <div>
+    <div class="state" id="state">Tudo limpo</div>
+    <div class="sub" id="sub">Deixe esta aba aberta e em primeiro plano. Qualquer coisa que tire o foco dela será registrada.</div>
+  </div>
+  <div class="clock mono">monitorando há<b id="uptime">00:00:00</b><span id="awayTotal">tempo fora: 0s</span></div>
+</section>
+
+<section class="grid" id="cards"></section>
+
+<section class="cols">
+  <div class="panel">
+    <h2>Linha do tempo
+      <span class="filters" id="filters"></span>
+    </h2>
+    <div id="log"><div class="empty">Nenhum evento ainda. Experimente dar alt-tab ou trocar de aba.</div></div>
+  </div>
+
+  <div class="side">
+    <div class="panel">
+      <h2>Configurações</h2>
+      <div class="body">
+        <div class="opt"><label><input type="checkbox" id="oModal" checked> Mostrar resumo ao voltar</label></div>
+        <div class="opt"><label><input type="checkbox" id="oNet" checked> Registrar requisições de rede</label></div>
+        <div class="opt"><label><input type="checkbox" id="oMouse"> Registrar mouse saindo da janela</label></div>
+        <div class="opt"><label><input type="checkbox" id="oIdle" checked> Alertar inatividade após</label><span><input type="number" id="oIdleS" value="60" min="5"> s</span></div>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>O que é detectado</h2>
+      <div class="body">
+        <ul class="lim">
+          <li><b>Alt-tab / troca de janela</b> — perda de foco, com duração.</li>
+          <li><b>Troca de aba / minimizar</b> — página ficou oculta.</li>
+          <li><b>Pop-ups e notificações que roubam o foco</b> — aparecem como perda de foco sem troca de aba.</li>
+          <li><b>Requisições de rede</b> desta página (fetch, XHR, WebSocket, beacon, recursos).</li>
+          <li><b>Pop-ups e alertas abertos por script</b> nesta página.</li>
+          <li><b>Atalhos</b> (Alt, Win/Cmd, Ctrl+Tab, PrintScreen), copiar/colar, clique direito, tela cheia, redimensionar, conexão.</li>
+        </ul>
+        <p style="color:var(--mut);margin:10px 0 0;font-size:12px">Limite do navegador: nenhum site enxerga outros programas, notificações que não roubam o foco ou o tráfego de rede do resto do computador. Para isso é preciso um app instalado.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div id="overlay"><div class="modal">
+  <h3>Algo aconteceu enquanto você estava fora</h3>
+  <div id="mSum" style="color:var(--mut);font-size:13px"></div>
+  <ul id="mList"></ul>
+  <div style="text-align:right"><button class="primary" id="mOk">Entendi</button></div>
+</div></div>
+<div class="toast" id="toast"></div>
+
+<script>
+(() => {
+  const $ = s => document.querySelector(s);
+  const start = Date.now();
+  let paused = false, sound = false, audioCtx = null;
+  let events = [];
+  let filter = 'todos';
+  let awaySince = null, awayReason = null, awayTotal = 0;
+  let pendingWhileAway = [];
+  let lastActivity = Date.now(), idleFlag = false;
+
+  const CATS = {
+    foco:   {label:'Foco',    color:'var(--warn)'},
+    aba:    {label:'Aba',     color:'var(--bad)'},
+    popup:  {label:'Pop-up',  color:'var(--vio)'},
+    rede:   {label:'Rede',    color:'var(--info)'},
+    teclado:{label:'Teclado', color:'#cfd6dd'},
+    sistema:{label:'Sistema', color:'var(--ok)'}
+  };
+  const COUNTERS = [
+    ['blur','Perdas de foco','var(--warn)'],
+    ['hidden','Aba oculta / minimizada','var(--bad)'],
+    ['steal','Possível pop-up / notificação','var(--vio)'],
+    ['net','Requisições de rede','var(--info)'],
+    ['keys','Atalhos suspeitos','#cfd6dd'],
+    ['clip','Copiar / colar','#cfd6dd'],
+    ['mouse','Mouse saiu','var(--mut)'],
+    ['idle','Inatividade','var(--mut)']
+  ];
+  const count = Object.fromEntries(COUNTERS.map(c => [c[0],0]));
+
+  // ---------- UI ----------
+  $('#cards').innerHTML = COUNTERS.map(([id,k,c]) =>
+    `<div class="card" id="c-${id}" style="--c:${c}"><div class="k">${k}</div><div class="v mono">0</div></div>`).join('');
+  $('#filters').innerHTML = ['todos',...Object.keys(CATS)].map(f =>
+    `<button data-f="${f}" class="${f==='todos'?'sel':''}">${f==='todos'?'Todos':CATS[f].label}</button>`).join('');
+  $('#filters').addEventListener('click', e => {
+    const f = e.target.dataset.f; if(!f) return;
+    filter = f;
+    document.querySelectorAll('#filters button').forEach(b => b.classList.toggle('sel', b.dataset.f===f));
+    render();
+  });
+
+  const fmtT = d => d.toLocaleTimeString('pt-BR',{hour12:false});
+  const fmtDur = ms => { const s = Math.round(ms/1000); if(s<60) return s+'s'; const m=Math.floor(s/60); if(m<60) return m+'min '+(s%60)+'s'; return Math.floor(m/60)+'h '+(m%60)+'min'; };
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+  function bump(id){
+    if(!(id in count)) return;
+    count[id]++;
+    const el = $('#c-'+id); el.querySelector('.v').textContent = count[id];
+    el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump');
+  }
+
+  function log(cat, text, detail, opts={}){
+    if(paused && !opts.force) return;
+    const ev = {t:new Date(), cat, text, detail:detail||''};
+    events.push(ev);
+    if(events.length > 2000) events.shift();
+    if(awaySince && cat!=='rede') pendingWhileAway.push(ev);
+    render();
+    if(opts.alert) alertHero(text);
+  }
+
+  function render(){
+    const list = events.filter(e => filter==='todos' || e.cat===filter).slice(-400).reverse();
+    if(!list.length){ $('#log').innerHTML = '<div class="empty">Nenhum evento '+(filter==='todos'?'ainda':'nesta categoria')+'.</div>'; return; }
+    $('#log').innerHTML = list.map(e =>
+      `<div class="row mono"><span class="t">${fmtT(e.t)}</span><span class="tag ${e.cat}">${CATS[e.cat].label}</span><span class="d">${esc(e.text)}${e.detail?` <small>${esc(e.detail)}</small>`:''}</span></div>`).join('');
+  }
+
+  let heroTimer;
+  function alertHero(text){
+    const h = $('#hero');
+    h.classList.remove('away'); h.classList.remove('alert'); void h.offsetWidth; h.classList.add('alert');
+    $('#state').textContent = '⚠ ' + text;
+    $('#sub').textContent = 'Às ' + fmtT(new Date()) + '. Veja os detalhes na linha do tempo.';
+    beep(880);
+    clearTimeout(heroTimer);
+    heroTimer = setTimeout(() => { if(!awaySince){ h.classList.remove('alert'); $('#state').textContent='Tudo limpo'; $('#sub').textContent='Último alerta: '+text+' ('+fmtT(new Date(Date.now()-8000))+')'; } }, 8000);
+  }
+
+  function toast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2200); }
+
+  function beep(freq=660, dur=0.18){
+    if(!sound || !audioCtx) return;
+    try{
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.type='square'; o.frequency.value=freq; g.gain.value=0.06;
+      o.connect(g); g.connect(audioCtx.destination);
+      o.start(); o.stop(audioCtx.currentTime+dur);
+    }catch(e){}
+  }
+
+  // ---------- Foco / visibilidade ----------
+  let blurAt = 0, hiddenDuringBlur = false;
+  function goAway(reason){
+    if(awaySince) return;
+    awaySince = Date.now(); awayReason = reason; pendingWhileAway = [];
+    const h=$('#hero'); h.classList.remove('alert'); h.classList.add('away');
+    $('#state').textContent = 'Fora da página';
+    $('#sub').textContent = reason + ' às ' + fmtT(new Date());
+  }
+  function comeBack(how){
+    if(!awaySince) return;
+    const dur = Date.now() - awaySince;
+    awayTotal += dur;
+    const kind = hiddenDuringBlur ? 'aba' : 'foco';
+    log(kind, 'Voltou para a página', 'ficou fora por ' + fmtDur(dur) + ' · ' + how);
+    const away = pendingWhileAway.slice(); const since = awaySince;
+    awaySince = null; hiddenDuringBlur = false;
+    $('#hero').classList.remove('away');
+    alertHero('Você saiu da página por ' + fmtDur(dur));
+    if($('#oModal').checked && !paused) showModal(since, dur, away);
+  }
+
+  window.addEventListener('blur', () => {
+    if(paused) return;
+    blurAt = Date.now(); hiddenDuringBlur = document.hidden;
+    bump('blur');
+    log('foco', 'Janela perdeu o foco', 'alt-tab, clique em outro programa, pop-up ou notificação');
+    goAway('Perdeu o foco');
+    // se em ~400ms a aba não ficou oculta, algo apareceu POR CIMA (pop-up, notificação, outro app)
+    setTimeout(() => {
+      if(awaySince && !document.hidden && !hiddenDuringBlur){
+        bump('steal');
+        log('popup', 'Algo ficou por cima da página', 'a aba continua visível: provável pop-up, notificação, diálogo do sistema ou outra janela', {});
+        beep(520);
+      }
+    }, 400);
+  });
+  window.addEventListener('focus', () => comeBack('foco retornou'));
+  document.addEventListener('visibilitychange', () => {
+    if(paused) return;
+    if(document.hidden){
+      hiddenDuringBlur = true;
+      bump('hidden');
+      log('aba', 'Página ficou oculta', 'troca de aba, minimizou ou bloqueou a tela');
+      goAway('Página oculta');
+    } else {
+      log('aba', 'Página visível de novo');
+      if(document.hasFocus()) comeBack('aba visível');
+    }
+  });
+  window.addEventListener('pagehide', () => log('aba','Página sendo fechada/recarregada'));
+  document.addEventListener('freeze', () => log('sistema','Navegador congelou a página (economia de energia)'));
+  document.addEventListener('resume', () => log('sistema','Página descongelada'));
+
+  // ---------- Mouse / atividade ----------
+  document.documentElement.addEventListener('mouseleave', () => { if($('#oMouse').checked){ bump('mouse'); log('foco','Mouse saiu da área da página'); } });
+  ['mousemove','keydown','mousedown','touchstart','wheel'].forEach(ev =>
+    window.addEventListener(ev, () => {
+      lastActivity = Date.now();
+      if(idleFlag){ idleFlag=false; log('sistema','Atividade retomada'); }
+    }, {passive:true}));
+
+  // ---------- Teclado ----------
+  window.addEventListener('keydown', e => {
+    if(paused) return;
+    let what = null;
+    if(e.key === 'PrintScreen') what = 'PrintScreen (captura de tela)';
+    else if(e.key === 'Meta' || e.key === 'OS') what = 'Tecla Windows/Cmd';
+    else if(e.key === 'Alt' && !e.repeat) what = 'Tecla Alt (possível alt-tab)';
+    else if(e.ctrlKey && e.key === 'Tab') what = 'Ctrl+Tab (trocar aba)';
+    else if((e.ctrlKey||e.metaKey) && ['t','n','w'].includes(e.key.toLowerCase())) what = (e.metaKey?'Cmd':'Ctrl')+'+'+e.key.toUpperCase()+' (nova aba/janela/fechar)';
+    else if(e.key === 'F12' || ((e.ctrlKey||e.metaKey) && e.shiftKey && ['i','j','c'].includes(e.key.toLowerCase()))) what = 'Atalho de DevTools';
+    if(what){ bump('keys'); log('teclado', what); }
+  });
+  window.addEventListener('keyup', e => { if(e.key==='PrintScreen' && !paused){ bump('keys'); log('teclado','PrintScreen (captura de tela)', '', {alert:true}); } });
+  ['copy','cut','paste'].forEach(t => document.addEventListener(t, () => { if(paused) return; bump('clip'); log('teclado', {copy:'Copiou',cut:'Recortou',paste:'Colou'}[t] + ' conteúdo'); }));
+  document.addEventListener('contextmenu', () => { if(!paused) log('teclado','Clique direito (menu de contexto)'); });
+
+  // ---------- Janela / sistema ----------
+  let rzT; window.addEventListener('resize', () => { clearTimeout(rzT); rzT = setTimeout(() => log('sistema','Janela redimensionada', innerWidth+'×'+innerHeight), 300); });
+  document.addEventListener('fullscreenchange', () => {
+    if(document.fullscreenElement) log('sistema','Entrou em tela cheia');
+    else log('aba','Saiu da tela cheia', 'Esc ou algo forçou a saída', {alert:true});
+  });
+  window.addEventListener('online', () => log('sistema','Conexão voltou'));
+  window.addEventListener('offline', () => log('rede','Conexão caiu', '', {alert:true}));
+  window.addEventListener('beforeprint', () => log('sistema','Tentativa de impressão'));
+  try{ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => log('sistema','Tema do sistema mudou')); }catch(e){}
+  if(navigator.getBattery) navigator.getBattery().then(b => b.addEventListener('chargingchange', () => log('sistema', b.charging?'Carregador conectado':'Carregador desconectado'))).catch(()=>{});
+
+  // ---------- Pop-ups abertos por script ----------
+  const _open = window.open;
+  window.open = function(url, ...r){ bump('steal'); log('popup','Script tentou abrir janela pop-up', String(url||'(vazio)'), {alert:true}); try{ return _open.call(window, url, ...r); }catch(e){ return null; } };
+  ['alert','confirm','prompt'].forEach(fn => { const o = window[fn]; window[fn] = function(m){ log('popup','Script chamou '+fn+'()', String(m||'')); try{ return o.apply(window, arguments); }catch(e){ return null; } }; });
+  if(window.Notification){
+    try{
+      const N = window.Notification;
+      window.Notification = function(title, opt){ log('popup','Página tentou mostrar notificação', title); return new N(title, opt); };
+      window.Notification.prototype = N.prototype;
+      Object.defineProperty(window.Notification,'permission',{get:()=>N.permission});
+      window.Notification.requestPermission = (...a) => { log('popup','Página pediu permissão de notificação'); return N.requestPermission(...a); };
+    }catch(e){}
+  }
+
+  // ---------- Rede ----------
+  const netOn = () => $('#oNet').checked && !paused;
+  const seen = new Set();
+  const short = u => { try{ const x = new URL(u, location.href); return x.host + x.pathname.slice(0,60) + (x.pathname.length>60?'…':''); }catch(e){ return String(u).slice(0,80); } };
+  const _fetch = window.fetch;
+  window.fetch = function(input, init){
+    const url = typeof input === 'string' ? input : (input && input.url) || String(input);
+    const method = (init && init.method) || (input && input.method) || 'GET';
+    const t0 = performance.now(); seen.add(url);
+    const p = _fetch.apply(this, arguments);
+    p.then(r => { if(netOn()){ bump('net'); log('rede', method+' '+short(url), 'fetch · '+r.status+' · '+Math.round(performance.now()-t0)+'ms'); } },
+           err => { if(netOn()){ bump('net'); log('rede', method+' '+short(url), 'fetch · falhou/bloqueada: '+(err&&err.message||err)); } });
+    return p;
+  };
+  const XO = XMLHttpRequest.prototype.open, XS = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.open = function(m,u){ this.__s = {m,u}; seen.add(String(u)); return XO.apply(this, arguments); };
+  XMLHttpRequest.prototype.send = function(){
+    const s = this.__s||{}, t0 = performance.now();
+    this.addEventListener('loadend', () => { if(netOn()){ bump('net'); log('rede', s.m+' '+short(s.u), 'XHR · '+this.status+' · '+Math.round(performance.now()-t0)+'ms'); } });
+    return XS.apply(this, arguments);
+  };
+  if(window.WebSocket){
+    const WS = window.WebSocket;
+    window.WebSocket = function(u, p){ if(netOn()){ bump('net'); log('rede','WebSocket '+short(u)); } return p===undefined ? new WS(u) : new WS(u,p); };
+    window.WebSocket.prototype = WS.prototype;
+  }
+  if(navigator.sendBeacon){ const SB = navigator.sendBeacon.bind(navigator); navigator.sendBeacon = (u,d) => { if(netOn()){ bump('net'); log('rede','Beacon '+short(u)); } return SB(u,d); }; }
+  try{
+    new PerformanceObserver(list => {
+      if(!netOn()) return;
+      list.getEntries().forEach(e => {
+        if(seen.has(e.name) || e.initiatorType==='fetch' || e.initiatorType==='xmlhttprequest') return;
+        bump('net');
+        log('rede', short(e.name), (e.initiatorType||'recurso')+' · '+Math.round(e.duration)+'ms'+(e.transferSize?' · '+Math.round(e.transferSize/1024)+'KB':''));
+      });
+    }).observe({type:'resource', buffered:false});
+  }catch(e){}
+  try{
+    new PerformanceObserver(list => { if(paused) return; list.getEntries().forEach(e => { if(e.duration>300) log('sistema','Página travou por '+Math.round(e.duration)+'ms','tarefa longa — o computador pode estar ocupado'); }); }).observe({type:'longtask'});
+  }catch(e){}
+
+  // ---------- Modal ----------
+  function showModal(since, dur, away){
+    $('#mSum').textContent = 'Saiu às ' + fmtT(new Date(since)) + ' e voltou às ' + fmtT(new Date()) + ' — ' + fmtDur(dur) + ' fora.';
+    $('#mList').innerHTML = away.length ? away.map(e => `<li><span class="mono" style="color:var(--mut)">${fmtT(e.t)}</span> ${esc(e.text)}${e.detail?` <span style="color:var(--mut)">— ${esc(e.detail)}</span>`:''}</li>`).join('') : '<li>Nenhum outro evento registrado.</li>';
+    $('#overlay').classList.add('show');
+  }
+  $('#mOk').onclick = () => $('#overlay').classList.remove('show');
+
+  // ---------- Botões ----------
+  $('#bPause').onclick = () => {
+    paused = !paused; document.body.classList.toggle('paused', paused);
+    $('#bPause').classList.toggle('on', !paused);
+    $('#bPause').textContent = paused ? '❚❚ Pausado' : '● Monitorando';
+    log('sistema', paused ? 'Monitoramento pausado' : 'Monitoramento retomado', '', {force:true});
+  };
+  $('#bSound').onclick = () => {
+    sound = !sound;
+    if(sound && !audioCtx){ try{ audioCtx = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ sound=false; toast('Som indisponível neste navegador'); } }
+    if(audioCtx && audioCtx.state==='suspended') audioCtx.resume().catch(()=>{});
+    $('#bSound').classList.toggle('on', sound);
+    $('#bSound').textContent = sound ? '🔊 Som ligado' : '🔇 Som desligado';
+    if(sound) beep(740);
+  };
+  $('#bFull').onclick = async () => {
+    try{ if(document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen(); }
+    catch(e){ toast('Tela cheia bloqueada aqui — abra a página em uma aba própria'); }
+  };
+  $('#bTest').onclick = () => {
+    fetch(location.href, {cache:'no-store'}).catch(()=>{});
+    log('sistema','Teste: requisição de rede disparada');
+    toast('Agora dê alt-tab ou troque de aba para testar o foco');
+  };
+  $('#bCopy').onclick = async () => {
+    const txt = events.map(e => `${fmtT(e.t)}\t${CATS[e.cat].label}\t${e.text}${e.detail?' — '+e.detail:''}`).join('\n') || '(vazio)';
+    try{ await navigator.clipboard.writeText(txt); toast('Registro copiado ('+events.length+' eventos)'); }
+    catch(e){ toast('Não foi possível copiar aqui'); }
+  };
+  $('#bClear').onclick = () => {
+    events = []; awayTotal = 0;
+    Object.keys(count).forEach(k => { count[k]=0; $('#c-'+k+' .v').textContent='0'; });
+    render(); toast('Registro limpo');
+  };
+
+  // ---------- Relógio / inatividade ----------
+  setInterval(() => {
+    const s = Math.floor((Date.now()-start)/1000);
+    $('#uptime').textContent = [s/3600|0, (s/60|0)%60, s%60].map(n => String(n).padStart(2,'0')).join(':');
+    const live = awayTotal + (awaySince ? Date.now()-awaySince : 0);
+    $('#awayTotal').textContent = 'tempo fora: ' + fmtDur(live);
+    if(awaySince) $('#state').textContent = 'Fora da página há ' + fmtDur(Date.now()-awaySince);
+    const lim = Math.max(5, +$('#oIdleS').value || 60) * 1000;
+    if(!paused && $('#oIdle').checked && !idleFlag && !awaySince && Date.now()-lastActivity > lim){
+      idleFlag = true; bump('idle');
+      log('sistema','Sem atividade há '+fmtDur(Date.now()-lastActivity), 'nenhum movimento de mouse ou tecla', {alert:true});
+    }
+  }, 1000);
+
+  log('sistema','Monitoramento iniciado', navigator.userAgent.split(') ')[0].replace('Mozilla/5.0 (','')+')');
+  if(!document.hasFocus()) goAway('Página aberta sem foco');
+})();
+</script>
+</body>
+</html>
